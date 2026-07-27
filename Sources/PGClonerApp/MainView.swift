@@ -40,6 +40,9 @@ struct MainView: View {
                     )
                 }
                 .disabled(model.isCloning)
+                // The principal toolbar item clips its content to the rounded
+                // toolbar group. Keep the labels clear of its leading edge.
+                .padding(.horizontal, 12)
             }
 
             ToolbarItemGroup {
@@ -108,7 +111,7 @@ struct MainView: View {
                 .foregroundStyle(.secondary)
 
             Picker(title, selection: selection) {
-                Text("Select…").tag(nil as UUID?)
+                Text("Select connection").tag(nil as UUID?)
                 ForEach(model.profiles) { profile in
                     Text("\(profile.name) · \(profile.database)")
                         .tag(profile.id as UUID?)
