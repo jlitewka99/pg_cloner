@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <title>PG Cloner twin data chips icon</title>
+  <defs>
+    <linearGradient id="background" x1="104" y1="76" x2="926" y2="952" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#243D6A"/>
+      <stop offset="0.42" stop-color="#172B4C"/>
+      <stop offset="1" stop-color="#0F172A"/>
+    </linearGradient>
+    <linearGradient id="source" x1="148" y1="394" x2="368" y2="630" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A5D4FF"/>
+      <stop offset="0.38" stop-color="#60A5FA"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+    <linearGradient id="clone" x1="656" y1="394" x2="876" y2="630" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D6FFF7"/>
+      <stop offset="0.38" stop-color="#5EEAD4"/>
+      <stop offset="1" stop-color="#0D9488"/>
+    </linearGradient>
+    <linearGradient id="flow" x1="356" y1="512" x2="668" y2="512" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#60A5FA"/>
+      <stop offset="0.5" stop-color="#B39CFF"/>
+      <stop offset="1" stop-color="#5EEAD4"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="206" y1="408" x2="792" y2="604" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.17"/>
+      <stop offset="0.44" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.05"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="64" y="64" width="896" height="896" rx="214" fill="#0F172A"/>
+  <rect x="64" y="64" width="896" height="896" rx="214" fill="url(#background)"/>
+
+  <!-- A single 1:1 copy gesture. -->
+  <path d="M366 512C430 430 574 430 650 512" stroke="#A78BFA" stroke-opacity="0.22" stroke-width="82" stroke-linecap="round"/>
+  <path d="M366 512C430 430 574 430 650 512" stroke="#7C6FD3" stroke-width="34" stroke-linecap="round"/>
+  <path d="M366 512C430 430 574 430 650 512" stroke="url(#flow)" stroke-width="34" stroke-linecap="round"/>
+  <path d="M604 458L662 512L604 566L604 532L628 512L604 492Z" fill="#F0FDFA"/>
+
+  <!-- Source data chip. -->
+  <rect x="148" y="414" width="220" height="236" rx="82" fill="#0A1630" fill-opacity="0.62"/>
+  <rect x="148" y="394" width="220" height="236" rx="82" fill="#2563EB"/>
+  <rect x="148" y="394" width="220" height="236" rx="82" fill="url(#source)"/>
+  <path d="M176 468C176 427 212 394 256 394H286C324 394 354 422 354 458C354 478 346 494 334 506C295 495 232 496 176 518V468Z" fill="#FFFFFF" fill-opacity="0.09"/>
+  <rect x="202" y="500" width="118" height="18" rx="9" fill="#EFF6FF" fill-opacity="0.92"/>
+  <circle cx="338" cy="509" r="9" fill="#EFF6FF" fill-opacity="0.88"/>
+  <rect x="202" y="544" width="76" height="16" rx="8" fill="#DBEAFE" fill-opacity="0.72"/>
+
+  <!-- Identical clone data chip. -->
+  <rect x="656" y="414" width="220" height="236" rx="82" fill="#061B2A" fill-opacity="0.62"/>
+  <rect x="656" y="394" width="220" height="236" rx="82" fill="#0D9488"/>
+  <rect x="656" y="394" width="220" height="236" rx="82" fill="url(#clone)"/>
+  <path d="M684 468C684 427 720 394 764 394H794C832 394 862 422 862 458C862 478 854 494 842 506C803 495 740 496 684 518V468Z" fill="#FFFFFF" fill-opacity="0.1"/>
+  <rect x="738" y="500" width="118" height="18" rx="9" fill="#F0FDFA" fill-opacity="0.92"/>
+  <circle cx="874" cy="509" r="9" fill="#F0FDFA" fill-opacity="0.88"/>
+  <rect x="738" y="544" width="76" height="16" rx="8" fill="#CCFBF1" fill-opacity="0.72"/>
+
+  <rect x="64.75" y="64.75" width="894.5" height="894.5" rx="213.25" stroke="#FFFFFF" stroke-opacity="0.1" stroke-width="1.5"/>
+</svg>

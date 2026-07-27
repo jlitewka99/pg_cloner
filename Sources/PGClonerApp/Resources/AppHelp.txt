@@ -1,0 +1,4 @@
+PG Cloner is distributed internally as an unsigned application.
+
+If macOS blocks the first launch, Control-click PG Cloner in Applications,
+choose Open, and confirm the prompt.

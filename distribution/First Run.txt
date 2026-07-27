@@ -1,0 +1,11 @@
+PG Cloner — first launch
+
+1. Drag PG Cloner.app to the Applications shortcut.
+2. Because this internal build is not notarized, Control-click the copied app,
+   choose Open, then confirm Open. If macOS still blocks it, allow the app in
+   System Settings → Privacy & Security.
+3. Open Settings → Connections and add source and target PostgreSQL profiles.
+   Passwords are stored in macOS Keychain, never in the profile JSON.
+4. For Azure authentication, install Azure CLI and run `az login` first.
+
+The application needs network access to the selected PostgreSQL servers.

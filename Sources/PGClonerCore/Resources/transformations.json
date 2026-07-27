@@ -1,0 +1,43 @@
+{
+  "version": "1.0",
+  "description": "Default rules for de-productionizing copied data.",
+  "column_patterns": [
+    {
+      "pattern": "(?i)email$",
+      "strategy": "ROT13",
+      "description": "Obfuscate email addresses"
+    },
+    {
+      "pattern": "(?i)(phone|mobile|telephone|fax)",
+      "strategy": "Reverse",
+      "description": "Reverse phone numbers"
+    },
+    {
+      "pattern": "(?i)(quantity|qty|amount|total|price|cost)$",
+      "strategy": "Add100",
+      "description": "Shift numeric values by 100"
+    },
+    {
+      "pattern": "(?i)(customer_name|contact_name|first_name|last_name|full_name)",
+      "strategy": "ROT13",
+      "description": "Obfuscate personal names"
+    }
+  ],
+  "table_specific": {
+    "dim_customer": {
+      "customer_name": "ROT13",
+      "customer_category": null
+    },
+    "sap_inventory_quantities": {
+      "batch_number": null
+    }
+  },
+  "exclude_patterns": [
+    "(?i)^id$",
+    "(?i)_id$",
+    "(?i)_uuid$",
+    "(?i)(created_at|updated_at|inserted_at|deleted_at|timestamp)",
+    "(?i)(status|state|type|category|enum)",
+    "(?i)(version|revision)"
+  ]
+}
