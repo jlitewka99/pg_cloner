@@ -3,6 +3,40 @@ set -euo pipefail
 
 project_dir=${0:A:h:h}
 developer_dir=$(xcode-select -p)
+release_version=${RELEASE_VERSION:-}
+release_build=${RELEASE_BUILD:-}
+source_packages_dir=${CLONED_SOURCE_PACKAGES_DIR:-}
+
+if [[ -n "$release_version" && ! "$release_version" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]]; then
+  print -u2 "RELEASE_VERSION must use MAJOR.MINOR.PATCH, got: $release_version"
+  exit 2
+fi
+if [[ -n "$release_build" && ! "$release_build" =~ '^[0-9]+(\.[0-9]+){0,2}$' ]]; then
+  print -u2 "RELEASE_BUILD must use Apple's numeric bundle-version format, got: $release_build"
+  exit 2
+fi
+if [[ -n "$release_version" && -z "$release_build" ]]; then
+  release_build="$release_version"
+fi
+if [[ -z "$release_version" && -n "$release_build" ]]; then
+  print -u2 "RELEASE_BUILD requires RELEASE_VERSION."
+  exit 2
+fi
+
+release_build_settings=()
+if [[ -n "$release_version" ]]; then
+  release_build_settings=(
+    "MARKETING_VERSION=$release_version"
+    "CURRENT_PROJECT_VERSION=$release_build"
+  )
+fi
+
+source_package_arguments=()
+if [[ -n "$source_packages_dir" ]]; then
+  source_package_arguments=(
+    -clonedSourcePackagesDirPath "$source_packages_dir"
+  )
+fi
 
 if [[ "$developer_dir" == *CommandLineTools* ]]; then
   print -u2 "Full Xcode is required. Install Xcode, then run:"
@@ -22,6 +56,8 @@ xcodebuild \
   -project "$project_dir/PGCloner.xcodeproj" \
   -scheme PGClonerApp \
   -configuration Release \
+  "${source_package_arguments[@]}" \
+  "${release_build_settings[@]}" \
   -resolvePackageDependencies
 
 xcodebuild \
@@ -30,10 +66,12 @@ xcodebuild \
   -scheme PGClonerApp \
   -configuration Release \
   -derivedDataPath "$derived_data" \
+  "${source_package_arguments[@]}" \
   -destination "generic/platform=macOS" \
   ARCHS="arm64 x86_64" \
   ONLY_ACTIVE_ARCH=NO \
   CODE_SIGNING_ALLOWED=NO \
+  "${release_build_settings[@]}" \
   build
 
 if [[ ! -d "$product" ]]; then

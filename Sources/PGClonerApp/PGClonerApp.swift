@@ -1,4 +1,5 @@
 import Logging
+import Sparkle
 import SwiftUI
 
 @main
@@ -8,9 +9,15 @@ struct PGClonerApp: App {
     #else
     @StateObject private var model: AppModel
     #endif
+    private let updaterController: SPUStandardUpdaterController
 
     init() {
         LoggingSystem.bootstrap { PGClonerOSLogHandler(label: $0) }
+        updaterController = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
         let model = AppModel()
         #if PGCLONER_OBSERVATION_MACRO
         _model = State(initialValue: model)
@@ -29,6 +36,9 @@ struct PGClonerApp: App {
         }
         .windowResizability(.contentMinSize)
         .commands {
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesView(updater: updaterController.updater)
+            }
             CommandGroup(after: .appSettings) {
                 Button("Reset Session") {
                     model.resetSession()
@@ -41,5 +51,30 @@ struct PGClonerApp: App {
             SettingsView(model: model)
                 .frame(width: 820, height: 590)
         }
+    }
+}
+
+private struct CheckForUpdatesView: View {
+    @ObservedObject private var viewModel: CheckForUpdatesViewModel
+    private let updater: SPUUpdater
+
+    init(updater: SPUUpdater) {
+        self.updater = updater
+        viewModel = CheckForUpdatesViewModel(updater: updater)
+    }
+
+    var body: some View {
+        Button("Check for Updates…", action: updater.checkForUpdates)
+            .disabled(!viewModel.canCheckForUpdates)
+    }
+}
+
+@MainActor
+private final class CheckForUpdatesViewModel: ObservableObject {
+    @Published var canCheckForUpdates = false
+
+    init(updater: SPUUpdater) {
+        updater.publisher(for: \.canCheckForUpdates)
+            .assign(to: &$canCheckForUpdates)
     }
 }

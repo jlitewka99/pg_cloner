@@ -24,6 +24,7 @@
 		A1000000000000000000000F /* PGClonerUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000C /* PGClonerUITests.swift */; };
 		A10000000000000000000010 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* XCTest.framework */; };
 		A10000000000000000000011 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* Assets.xcassets */; };
+		A10000000000000000000012 /* Sparkle.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* Sparkle.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,6 +57,7 @@
 		A20000000000000000000011 /* PGCloner.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PGCloner.entitlements; sourceTree = "<group>"; };
 		A20000000000000000000012 /* First Run.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "First Run.txt"; sourceTree = "<group>"; };
 		A20000000000000000000013 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Resources/Assets.xcassets; sourceTree = "<group>"; };
+		A20000000000000000000014 /* Sparkle.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = Sparkle.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -66,6 +68,7 @@
 				A1000000000000000000000C /* PGClonerCore in Frameworks */,
 				A1000000000000000000000D /* PGClonerPostgres in Frameworks */,
 				A1000000000000000000000E /* Logging in Frameworks */,
+				A10000000000000000000012 /* Sparkle.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -132,6 +135,7 @@
 			isa = PBXGroup;
 			children = (
 				A2000000000000000000000F /* XCTest.framework */,
+				A20000000000000000000014 /* Sparkle.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -165,6 +169,7 @@
 				A90000000000000000000001 /* PGClonerCore */,
 				A90000000000000000000002 /* PGClonerPostgres */,
 				A90000000000000000000003 /* Logging */,
+				A90000000000000000000006 /* Sparkle */,
 			);
 			productName = PGClonerApp;
 			productReference = A2000000000000000000000D /* PG Cloner.app */;
@@ -221,6 +226,7 @@
 			packageReferences = (
 				A90000000000000000000004 /* XCLocalSwiftPackageReference "." */,
 				A90000000000000000000005 /* XCRemoteSwiftPackageReference "swift-log" */,
+				A90000000000000000000007 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			productRefGroup = A50000000000000000000006 /* Products */;
 			projectDirPath = "";
@@ -442,6 +448,14 @@
 				minimumVersion = 1.6.0;
 			};
 		};
+		A90000000000000000000007 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -459,6 +473,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A90000000000000000000005 /* XCRemoteSwiftPackageReference "swift-log" */;
 			productName = Logging;
+		};
+		A90000000000000000000006 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A90000000000000000000007 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

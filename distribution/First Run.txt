@@ -7,5 +7,6 @@ PG Cloner — first launch
 3. Open Settings → Connections and add source and target PostgreSQL profiles.
    Passwords are stored in macOS Keychain, never in the profile JSON.
 4. For Azure authentication, install Azure CLI and run `az login` first.
+5. Choose PG Cloner → Check for Updates… to fetch the latest signed beta.
 
 The application needs network access to the selected PostgreSQL servers.

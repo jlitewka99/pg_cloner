@@ -4,8 +4,20 @@ set -euo pipefail
 project_dir=${0:A:h:h}
 app_path=${1:-"$project_dir/dist/PG Cloner.app"}
 output_dir="$project_dir/dist"
-dmg_path="$output_dir/PG-Cloner.dmg"
-checksum_path="$output_dir/PG-Cloner.dmg.sha256"
+release_version=${RELEASE_VERSION:-}
+
+if [[ -n "$release_version" && ! "$release_version" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]]; then
+  print -u2 "RELEASE_VERSION must use MAJOR.MINOR.PATCH, got: $release_version"
+  exit 2
+fi
+
+artifact_name="PG-Cloner"
+if [[ -n "$release_version" ]]; then
+  artifact_name="${artifact_name}-v${release_version}"
+fi
+
+dmg_path="$output_dir/${artifact_name}.dmg"
+checksum_path="$output_dir/${artifact_name}.dmg.sha256"
 
 if [[ ! -d "$app_path" ]]; then
   print -u2 "Application not found: $app_path"
@@ -36,12 +48,12 @@ hdiutil create \
   "$temporary_dmg"
 
 if [[ -e "$dmg_path" ]]; then
-  mv "$dmg_path" "$output_dir/PG-Cloner.previous.$(date +%Y%m%d%H%M%S).dmg"
+  mv "$dmg_path" "$output_dir/${artifact_name}.previous.$(date +%Y%m%d%H%M%S).dmg"
 fi
 mv "$temporary_dmg" "$dmg_path"
 
 checksum=$(shasum -a 256 "$dmg_path" | awk '{print $1}')
-print "${checksum}  PG-Cloner.dmg" > "$checksum_path"
+print "${checksum}  ${artifact_name}.dmg" > "$checksum_path"
 
 print "Created: $dmg_path"
 print "SHA-256: $checksum"

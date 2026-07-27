@@ -19,6 +19,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", exact: "2.83.0"),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", exact: "2.30.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0"),
         // 1.6 requires the macOS 26 standard library's Span API. Pinning 1.1.4
         // keeps the package buildable with the macOS 14/15 SDKs supported by v1.
         .package(url: "https://github.com/apple/swift-collections.git", exact: "1.1.4"),
@@ -59,7 +60,8 @@ let package = Package(
             dependencies: [
                 "PGClonerCore",
                 "PGClonerPostgres",
-                .product(name: "Logging", package: "swift-log")
+                .product(name: "Logging", package: "swift-log"),
+                .product(name: "Sparkle", package: "Sparkle")
             ],
             path: "Sources/PGClonerApp",
             resources: [
@@ -69,7 +71,11 @@ let package = Package(
                 .define("PGCLONER_APP")
             ],
             linkerSettings: [
-                .linkedFramework("Security")
+                .linkedFramework("Security"),
+                .unsafeFlags([
+                    "-Xlinker", "-rpath",
+                    "-Xlinker", "@executable_path/../Frameworks"
+                ])
             ]
         ),
         .testTarget(
