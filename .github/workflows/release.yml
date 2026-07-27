@@ -15,7 +15,42 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate-release-source:
+    name: Validate release source
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      release_allowed: ${{ steps.gate.outputs.release_allowed }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Allow only semantic-version tags already on main
+        id: gate
+        shell: bash
+        run: |
+          tag="$GITHUB_REF_NAME"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "release_allowed=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping: $tag is not a vMAJOR.MINOR.PATCH release tag."
+            exit 0
+          fi
+
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          tag_commit="$(git rev-list -n 1 "$GITHUB_REF")"
+          if git merge-base --is-ancestor "$tag_commit" origin/main; then
+            echo "release_allowed=true" >> "$GITHUB_OUTPUT"
+            echo "Release tag $tag points to a commit already contained in main."
+          else
+            echo "release_allowed=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping: release tag $tag must point to a commit already contained in main."
+          fi
+
   release:
+    needs: validate-release-source
+    if: needs.validate-release-source.outputs.release_allowed == 'true'
     runs-on: macos-26
     env:
       GH_TOKEN: ${{ github.token }}
