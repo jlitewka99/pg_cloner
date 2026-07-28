@@ -21,7 +21,11 @@ final class AppModel: ObservableObject {
     #if !PGCLONER_OBSERVATION_MACRO
     @Published
     #endif
-    var profiles: [ConnectionProfile] = []
+    var sourceProfiles: [ConnectionProfile] = []
+    #if !PGCLONER_OBSERVATION_MACRO
+    @Published
+    #endif
+    var targetProfiles: [ConnectionProfile] = []
     #if !PGCLONER_OBSERVATION_MACRO
     @Published
     #endif
@@ -142,11 +146,11 @@ final class AppModel: ObservableObject {
     }
 
     var sourceProfile: ConnectionProfile? {
-        profiles.first { $0.id == sourceProfileID }
+        sourceProfiles.first { $0.id == sourceProfileID }
     }
 
     var targetProfile: ConnectionProfile? {
-        profiles.first { $0.id == targetProfileID }
+        targetProfiles.first { $0.id == targetProfileID }
     }
 
     var filteredTables: [TableSummary] {
@@ -163,23 +167,26 @@ final class AppModel: ObservableObject {
 
     func bootstrap() async {
         do {
-            var loaded = try await profileStore.load()
-            if loaded.isEmpty {
-                let legacy = try await profileStore.importLegacyIfNeeded()
-                for item in legacy {
-                    loaded.append(item.profile)
-                    if let password = item.password.nilIfBlank {
-                        try await credentials.save(password: password, for: item.profile)
-                    }
+            if let migration = try await profileStore.migrationIfNeeded() {
+                try await saveImportedProfiles(migration.source)
+                try await saveImportedProfiles(migration.target)
+                sourceProfiles = migration.source.map(\.profile)
+                targetProfiles = migration.target.map(\.profile)
+                try await profileStore.save(sourceProfiles, for: .source)
+                try await profileStore.save(targetProfiles, for: .target)
+
+                if migration.kind != .empty {
+                    appendLog(
+                        .info,
+                        "Imported \(sourceProfiles.count) source and \(targetProfiles.count) target connection profiles"
+                    )
                 }
-                if !legacy.isEmpty {
-                    try await profileStore.save(loaded)
-                    appendLog(.info, "Imported \(legacy.count) legacy connection profiles")
-                }
+            } else {
+                sourceProfiles = try await profileStore.load(.source)
+                targetProfiles = try await profileStore.load(.target)
             }
-            profiles = loaded
-            sourceProfileID = loaded.first?.id
-            targetProfileID = loaded.dropFirst().first?.id ?? loaded.first?.id
+            sourceProfileID = sourceProfiles.first?.id
+            targetProfileID = targetProfiles.first?.id
 
             let ruleSets = try await rules.load()
             defaultRules = ruleSets.defaults
@@ -193,31 +200,68 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func saveProfile(_ profile: ConnectionProfile, password: String) async throws {
+    func saveProfile(
+        _ profile: ConnectionProfile,
+        for role: ConnectionProfileRole,
+        password: String
+    ) async throws {
         if profile.authentication == .password, let password = password.nilIfBlank {
             try await credentials.save(password: password, for: profile)
         }
+        switch role {
+        case .source:
+            upsert(profile, in: &sourceProfiles)
+            try await profileStore.save(sourceProfiles, for: .source)
+            sourceProfileID = sourceProfileID ?? profile.id
+        case .target:
+            upsert(profile, in: &targetProfiles)
+            try await profileStore.save(targetProfiles, for: .target)
+            targetProfileID = targetProfileID ?? profile.id
+        }
+    }
+
+    func deleteProfile(_ profile: ConnectionProfile, from role: ConnectionProfileRole) async {
+        do {
+            try await profileStore.delete(profileID: profile.id, from: role)
+            try await credentials.delete(profileID: profile.id)
+            switch role {
+            case .source:
+                sourceProfiles.removeAll { $0.id == profile.id }
+                if sourceProfileID == profile.id {
+                    sourceProfileID = sourceProfiles.first?.id
+                    sourceChanged()
+                }
+            case .target:
+                targetProfiles.removeAll { $0.id == profile.id }
+                if targetProfileID == profile.id {
+                    targetProfileID = targetProfiles.first?.id
+                }
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func saveImportedProfiles(_ importedProfiles: [ImportedProfile]) async throws {
+        for imported in importedProfiles where imported.profile.authentication == .password {
+            if let password = imported.password.nilIfBlank {
+                try await credentials.save(password: password, for: imported.profile)
+            } else if let sourceProfileID = imported.passwordSourceProfileID {
+                try await credentials.copyStoredPassword(
+                    from: sourceProfileID,
+                    to: imported.profile.id
+                )
+            }
+        }
+    }
+
+    private func upsert(_ profile: ConnectionProfile, in profiles: inout [ConnectionProfile]) {
         if let index = profiles.firstIndex(where: { $0.id == profile.id }) {
             profiles[index] = profile
         } else {
             profiles.append(profile)
         }
         profiles.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        try await profileStore.save(profiles)
-        sourceProfileID = sourceProfileID ?? profile.id
-        targetProfileID = targetProfileID ?? profile.id
-    }
-
-    func deleteProfile(_ profile: ConnectionProfile) async {
-        do {
-            profiles.removeAll { $0.id == profile.id }
-            try await profileStore.save(profiles)
-            try await credentials.delete(profileID: profile.id)
-            if sourceProfileID == profile.id { sourceProfileID = profiles.first?.id }
-            if targetProfileID == profile.id { targetProfileID = profiles.first?.id }
-        } catch {
-            errorMessage = error.localizedDescription
-        }
     }
 
     func testProfile(_ profile: ConnectionProfile) async throws -> String {
@@ -227,6 +271,12 @@ final class AppModel: ObservableObject {
     func sourceChanged() {
         selectedTables.removeAll()
         plan = nil
+        activeTransformations = [:]
+        guard sourceProfile != nil else {
+            schemas = []
+            tables = []
+            return
+        }
         Task { await loadSource() }
     }
 

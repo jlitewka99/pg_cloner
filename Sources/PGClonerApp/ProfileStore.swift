@@ -1,8 +1,19 @@
 import Foundation
 import PGClonerCore
 
+enum ConnectionProfileRole: String, CaseIterable, Sendable {
+    case source
+    case target
+
+    var displayName: String { rawValue.capitalized }
+
+    fileprivate var fileName: String { "\(rawValue)_connections.json" }
+}
+
 actor ProfileStore {
-    private let fileManager = FileManager.default
+    private let fileManager: FileManager
+    private let applicationSupportDirectoryOverride: URL?
+    private let legacyDirectory: URL
     private let decoder = JSONDecoder()
     private let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -10,72 +21,88 @@ actor ProfileStore {
         return encoder
     }()
 
-    func load() throws -> [ConnectionProfile] {
-        let url = try profilesURL()
+    init(
+        applicationSupportDirectory: URL? = nil,
+        legacyDirectory: URL? = nil,
+        fileManager: FileManager = .default
+    ) {
+        self.fileManager = fileManager
+        applicationSupportDirectoryOverride = applicationSupportDirectory
+        self.legacyDirectory = legacyDirectory
+            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent(
+                ".pg_cloner",
+                isDirectory: true
+            )
+    }
+
+    func load(_ role: ConnectionProfileRole) throws -> [ConnectionProfile] {
+        let url = try profilesURL(for: role)
         guard fileManager.fileExists(atPath: url.path) else { return [] }
         return try decoder.decode(
             [ConnectionProfile].self,
             from: Data(contentsOf: url)
-        ).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        ).sorted(by: Self.sortProfiles)
     }
 
-    func save(_ profiles: [ConnectionProfile]) throws {
-        let url = try profilesURL()
+    func save(_ profiles: [ConnectionProfile], for role: ConnectionProfileRole) throws {
+        let url = try profilesURL(for: role)
         try fileManager.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try encoder.encode(profiles).write(to: url, options: .atomic)
+        try encoder.encode(profiles.sorted(by: Self.sortProfiles)).write(to: url, options: .atomic)
     }
 
-    func importLegacyIfNeeded() throws -> [LegacyProfile] {
-        guard try load().isEmpty else { return [] }
-        let home = fileManager.homeDirectoryForCurrentUser
-        let directory = home.appendingPathComponent(".pg_cloner", isDirectory: true)
-        let files = [
-            directory.appendingPathComponent("source_connections.json"),
-            directory.appendingPathComponent("target_connections.json")
-        ]
+    func save(_ profile: ConnectionProfile, for role: ConnectionProfileRole) throws {
+        var profiles = try load(role)
+        if let index = profiles.firstIndex(where: { $0.id == profile.id }) {
+            profiles[index] = profile
+        } else {
+            profiles.append(profile)
+        }
+        try save(profiles, for: role)
+    }
 
-        var imported: [LegacyProfile] = []
-        var seen = Set<String>()
-        for file in files where fileManager.fileExists(atPath: file.path) {
-            let object = try JSONSerialization.jsonObject(with: Data(contentsOf: file))
-            guard let records = object as? [String: [String: Any]] else { continue }
-            for (_, value) in records {
-                let connectionType = value["connection_type"] as? String ?? "postgres"
-                guard connectionType == "postgres" else { continue }
-                let key = [
-                    value["host"] as? String ?? "",
-                    String(value["port"] as? Int ?? 5_432),
-                    value["database"] as? String ?? "",
-                    value["username"] as? String ?? ""
-                ].joined(separator: "|")
-                guard seen.insert(key).inserted else { continue }
+    func delete(profileID: UUID, from role: ConnectionProfileRole) throws {
+        try save(load(role).filter { $0.id != profileID }, for: role)
+    }
 
-                let authentication: AuthenticationMethod =
-                    (value["auth_type"] as? String) == "azure_ad" ? .azureCLI : .password
-                let profile = ConnectionProfile(
-                    name: value["name"] as? String ?? "Imported connection",
-                    host: value["host"] as? String ?? "localhost",
-                    port: value["port"] as? Int ?? 5_432,
-                    database: value["database"] as? String ?? "",
-                    username: value["username"] as? String ?? "",
-                    authentication: authentication,
-                    tlsMode: (value["ssl"] as? Bool) == true ? .require : .disable
+    /// Returns a one-time migration only before either role-specific store exists.
+    func migrationIfNeeded() throws -> ProfileMigration? {
+        guard try !hasRoleSpecificStore() else { return nil }
+
+        let legacySource = try loadLegacyProfiles(for: .source)
+        let legacyTarget = try loadLegacyProfiles(for: .target)
+        if !legacySource.isEmpty || !legacyTarget.isEmpty {
+            return ProfileMigration(
+                kind: .legacyRoleSpecific,
+                source: legacySource,
+                target: legacyTarget
+            )
+        }
+
+        let currentProfiles = try loadUnifiedProfiles()
+        return ProfileMigration(
+            kind: currentProfiles.isEmpty ? .empty : .unifiedProfiles,
+            source: currentProfiles.map { profile in
+                ImportedProfile(
+                    profile: Self.copy(of: profile),
+                    passwordSourceProfileID: profile.id
                 )
-                imported.append(
-                    LegacyProfile(
-                        profile: profile,
-                        password: value["password"] as? String
-                    )
+            },
+            target: currentProfiles.map { profile in
+                ImportedProfile(
+                    profile: Self.copy(of: profile),
+                    passwordSourceProfileID: profile.id
                 )
             }
-        }
-        return imported
+        )
     }
 
     func applicationSupportDirectory() throws -> URL {
+        if let applicationSupportDirectoryOverride {
+            return applicationSupportDirectoryOverride
+        }
         guard let root = fileManager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -85,12 +112,106 @@ actor ProfileStore {
         return root.appendingPathComponent("PG Cloner", isDirectory: true)
     }
 
-    private func profilesURL() throws -> URL {
-        try applicationSupportDirectory().appendingPathComponent("profiles.json")
+    func profilesURL(for role: ConnectionProfileRole) throws -> URL {
+        try applicationSupportDirectory().appendingPathComponent(role.fileName)
+    }
+
+    private func hasRoleSpecificStore() throws -> Bool {
+        for role in ConnectionProfileRole.allCases {
+            if fileManager.fileExists(atPath: try profilesURL(for: role).path) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func loadUnifiedProfiles() throws -> [ConnectionProfile] {
+        let url = try applicationSupportDirectory().appendingPathComponent("profiles.json")
+        guard fileManager.fileExists(atPath: url.path) else { return [] }
+        return try decoder.decode([ConnectionProfile].self, from: Data(contentsOf: url))
+    }
+
+    private func loadLegacyProfiles(for role: ConnectionProfileRole) throws -> [ImportedProfile] {
+        let url = legacyDirectory.appendingPathComponent(role.fileName)
+        guard fileManager.fileExists(atPath: url.path) else { return [] }
+
+        let records = try decoder.decode(
+            [String: LegacyConnectionRecord].self,
+            from: Data(contentsOf: url)
+        )
+        return records.values.compactMap { record in
+            guard (record.connectionType ?? "postgres") == "postgres" else { return nil }
+            return ImportedProfile(
+                profile: ConnectionProfile(
+                    name: record.name ?? "Imported connection",
+                    host: record.host ?? "localhost",
+                    port: record.port ?? 5_432,
+                    database: record.database ?? "",
+                    username: record.username ?? "",
+                    authentication: record.authType == "azure_ad" ? .azureCLI : .password,
+                    tlsMode: record.ssl == true ? .require : .disable
+                ),
+                password: record.password
+            )
+        }.sorted { Self.sortProfiles($0.profile, $1.profile) }
+    }
+
+    private static func copy(of profile: ConnectionProfile) -> ConnectionProfile {
+        ConnectionProfile(
+            name: profile.name,
+            host: profile.host,
+            port: profile.port,
+            database: profile.database,
+            username: profile.username,
+            authentication: profile.authentication,
+            tlsMode: profile.tlsMode,
+            azureCLIPath: profile.azureCLIPath
+        )
+    }
+
+    private static func sortProfiles(_ lhs: ConnectionProfile, _ rhs: ConnectionProfile) -> Bool {
+        lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
     }
 }
 
-struct LegacyProfile: Sendable {
+struct ProfileMigration: Sendable {
+    enum Kind: Equatable, Sendable {
+        case legacyRoleSpecific
+        case unifiedProfiles
+        case empty
+    }
+
+    var kind: Kind
+    var source: [ImportedProfile]
+    var target: [ImportedProfile]
+}
+
+struct ImportedProfile: Sendable {
     var profile: ConnectionProfile
     var password: String?
+    var passwordSourceProfileID: UUID?
+}
+
+private struct LegacyConnectionRecord: Decodable {
+    var name: String?
+    var host: String?
+    var port: Int?
+    var database: String?
+    var username: String?
+    var password: String?
+    var ssl: Bool?
+    var authType: String?
+    var connectionType: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case host
+        case port
+        case database
+        case username
+        case password
+        case ssl
+        case authType = "auth_type"
+        case connectionType = "connection_type"
+    }
 }

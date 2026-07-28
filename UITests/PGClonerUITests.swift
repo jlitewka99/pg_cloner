@@ -7,7 +7,7 @@ final class PGClonerUITests: XCTestCase {
         app.launch()
 
         app.buttons["settingsButton"].click()
-        let add = app.buttons["addConnectionButton"]
+        let add = app.buttons["addSourceConnectionButton"]
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         add.click()
 
@@ -18,10 +18,11 @@ final class PGClonerUITests: XCTestCase {
         replaceText(in: app.textFields["profileUsername"], with: "postgres")
         replaceText(in: app.secureTextFields["profilePassword"], with: "not-persisted-in-json")
 
-        let save = app.buttons["saveProfileButton"]
+        let save = app.buttons["saveSourceProfileButton"]
         XCTAssertTrue(save.isEnabled)
         save.click()
         XCTAssertTrue(app.staticTexts["UI Test"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts.matching(identifier: "UI Test").count, 1)
     }
 
     @MainActor

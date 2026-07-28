@@ -36,57 +36,79 @@ private struct ConnectionSettingsView: View {
     @ObservedObject var model: AppModel
     #endif
     @State private var editingProfile: ConnectionProfile?
+    @State private var editingRole: ConnectionProfileRole = .source
     @State private var showingEditor = false
 
     var body: some View {
         VStack(alignment: .leading) {
-            HStack {
-                Text("Connection profiles")
-                    .font(.title2.bold())
-                Spacer()
-                Button {
-                    editingProfile = nil
-                    showingEditor = true
-                } label: {
-                    Label("Add", systemImage: "plus")
-                }
-                .accessibilityIdentifier("addConnectionButton")
-            }
+            Text("Connection profiles")
+                .font(.title2.bold())
 
-            List {
-                ForEach(model.profiles) { profile in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(profile.name).font(.headline)
-                            Text(profile.summary)
+            connectionSection(
+                role: .source,
+                profiles: model.sourceProfiles
+            )
+            connectionSection(
+                role: .target,
+                profiles: model.targetProfiles
+            )
+        }
+        .sheet(isPresented: $showingEditor) {
+            ProfileEditorView(model: model, role: editingRole, profile: editingProfile)
+        }
+    }
+
+    private func connectionSection(
+        role: ConnectionProfileRole,
+        profiles: [ConnectionProfile]
+    ) -> some View {
+        GroupBox {
+            if profiles.isEmpty {
+                ContentUnavailableView(
+                    "No \(role.rawValue) connections",
+                    systemImage: "externaldrive.badge.plus"
+                )
+                .frame(maxWidth: .infinity, minHeight: 90)
+            } else {
+                List {
+                    ForEach(profiles) { profile in
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(profile.name).font(.headline)
+                                Text(profile.summary)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(profile.authentication == .azureCLI ? "Azure CLI" : "Password")
                                 .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Text(profile.authentication == .azureCLI ? "Azure CLI" : "Password")
-                            .foregroundStyle(.secondary)
-                        Button("Edit") {
-                            editingProfile = profile
-                            showingEditor = true
-                        }
-                        Button(role: .destructive) {
-                            Task { await model.deleteProfile(profile) }
-                        } label: {
-                            Image(systemName: "trash")
+                            Button("Edit") {
+                                editingRole = role
+                                editingProfile = profile
+                                showingEditor = true
+                            }
+                            Button(role: .destructive) {
+                                Task { await model.deleteProfile(profile, from: role) }
+                            } label: {
+                                Image(systemName: "trash")
+                            }
                         }
                     }
                 }
+                .frame(minHeight: 120, maxHeight: 220)
             }
-            .overlay {
-                if model.profiles.isEmpty {
-                    ContentUnavailableView(
-                        "No profiles",
-                        systemImage: "externaldrive.badge.plus"
-                    )
+        } label: {
+            HStack {
+                Text("\(role.displayName) connections")
+                Spacer()
+                Button {
+                    editingRole = role
+                    editingProfile = nil
+                    showingEditor = true
+                } label: {
+                    Label("Add \(role.displayName)", systemImage: "plus")
                 }
+                .accessibilityIdentifier("add\(role.displayName)ConnectionButton")
             }
-        }
-        .sheet(isPresented: $showingEditor) {
-            ProfileEditorView(model: model, profile: editingProfile)
         }
     }
 }
@@ -94,6 +116,7 @@ private struct ConnectionSettingsView: View {
 private struct ProfileEditorView: View {
     @Environment(\.dismiss) private var dismiss
     let model: AppModel
+    let role: ConnectionProfileRole
     let existingID: UUID
 
     @State private var name: String
@@ -108,8 +131,9 @@ private struct ProfileEditorView: View {
     @State private var status: String?
     @State private var isWorking = false
 
-    init(model: AppModel, profile: ConnectionProfile?) {
+    init(model: AppModel, role: ConnectionProfileRole, profile: ConnectionProfile?) {
         self.model = model
+        self.role = role
         existingID = profile?.id ?? UUID()
         _name = State(initialValue: profile?.name ?? "")
         _host = State(initialValue: profile?.host ?? "localhost")
@@ -147,7 +171,7 @@ private struct ProfileEditorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Connection profile")
+            Text("\(role.displayName) connection")
                 .font(.title2.bold())
 
             Form {
@@ -200,7 +224,7 @@ private struct ProfileEditorView: View {
                     isWorking = true
                     Task {
                         do {
-                            try await model.saveProfile(profile, password: password)
+                            try await model.saveProfile(profile, for: role, password: password)
                             let version = try await model.testProfile(profile)
                             status = "Connected: \(version)"
                         } catch {
@@ -215,7 +239,7 @@ private struct ProfileEditorView: View {
                     isWorking = true
                     Task {
                         do {
-                            try await model.saveProfile(profile, password: password)
+                            try await model.saveProfile(profile, for: role, password: password)
                             dismiss()
                         } catch {
                             status = error.localizedDescription
@@ -225,7 +249,7 @@ private struct ProfileEditorView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(profile == nil || isWorking)
-                .accessibilityIdentifier("saveProfileButton")
+                .accessibilityIdentifier("save\(role.displayName)ProfileButton")
             }
         }
         .padding(24)
