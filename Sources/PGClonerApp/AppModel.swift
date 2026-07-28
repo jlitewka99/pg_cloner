@@ -173,27 +173,8 @@ final class AppModel: ObservableObject {
 
     func bootstrap() async {
         do {
-            if let migration = try await profileStore.migrationIfNeeded() {
-                try await saveImportedProfiles(migration.source)
-                try await saveImportedProfiles(migration.target)
-                sourceProfiles = migration.source.map(\.profile)
-                targetProfiles = migration.target.map(\.profile)
-                try await profileStore.save(sourceProfiles, for: .source)
-                try await profileStore.save(targetProfiles, for: .target)
-                if migration.kind == .previousApplicationSupport {
-                    try await profileStore.copyPreviousConfigurationIfNeeded()
-                }
-
-                if migration.kind != .empty {
-                    appendLog(
-                        .info,
-                        "Imported \(sourceProfiles.count) source and \(targetProfiles.count) target connection profiles"
-                    )
-                }
-            } else {
-                sourceProfiles = try await profileStore.load(.source)
-                targetProfiles = try await profileStore.load(.target)
-            }
+            sourceProfiles = try await profileStore.load(.source)
+            targetProfiles = try await profileStore.load(.target)
             sourceProfileID = nil
             targetProfileID = nil
 
@@ -246,19 +227,6 @@ final class AppModel: ObservableObject {
             }
         } catch {
             errorMessage = error.localizedDescription
-        }
-    }
-
-    private func saveImportedProfiles(_ importedProfiles: [ImportedProfile]) async throws {
-        for imported in importedProfiles where imported.profile.authentication == .password {
-            if let password = imported.password.nilIfBlank {
-                try await credentials.save(password: password, for: imported.profile)
-            } else if let sourceProfileID = imported.passwordSourceProfileID {
-                try await credentials.copyStoredPassword(
-                    from: sourceProfileID,
-                    to: imported.profile.id
-                )
-            }
         }
     }
 
