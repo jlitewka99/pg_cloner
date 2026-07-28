@@ -190,6 +190,131 @@ struct CloneIntegrationTests {
         }
     }
 
+    @Test("A statement timeout rolls back the current table")
+    func statementTimeoutRollsBackCurrentTable() async throws {
+        let configuration = try #require(integrationConfiguration)
+        try await configuration.withDatabases { source, target, password in
+            try await withConnection(source, password: password, id: 45) { sourceConnection in
+                try await execute(
+                    sourceConnection,
+                    "CREATE TABLE public.slow_rows (id bigint PRIMARY KEY)"
+                )
+                try await execute(sourceConnection, "INSERT INTO public.slow_rows VALUES (1)")
+                try await execute(
+                    sourceConnection,
+                    """
+                    CREATE FUNCTION public.slow_filter() RETURNS boolean
+                    LANGUAGE plpgsql AS $$
+                    BEGIN
+                      PERFORM pg_sleep(2);
+                      RETURN true;
+                    END;
+                    $$
+                    """
+                )
+            }
+
+            let request = CloneRequest(
+                sourceProfileID: source.id,
+                targetProfileID: target.id,
+                selectedTables: [TableReference(name: "slow_rows")],
+                options: CopyOptions(whereClause: "slow_filter()"),
+                executionOptions: CloneExecutionOptions(
+                    queryTimeoutSeconds: 1,
+                    retryAttempts: 0
+                )
+            )
+            let output = try await runClone(
+                coordinator: coordinator(password: password),
+                request: request,
+                source: source,
+                target: target
+            )
+
+            if case .rolledBack = output.result.outcomes[TableReference(name: "slow_rows")] {
+                // Expected.
+            } else {
+                Issue.record("The timed-out table was not reported as rolled back.")
+            }
+            try await withConnection(target, password: password, id: 46) { verification in
+                let table = try await scalarString(
+                    verification,
+                    "SELECT to_regclass('public.slow_rows')::text"
+                )
+                #expect(table == nil)
+            }
+        }
+    }
+
+    @Test("A transient target failure retries the table on a new connection")
+    func transientTargetFailureRetriesTable() async throws {
+        let configuration = try #require(integrationConfiguration)
+        try await configuration.withDatabases { source, target, password in
+            try await withConnection(source, password: password, id: 47) { sourceConnection in
+                try await execute(
+                    sourceConnection,
+                    "CREATE TABLE public.retry_rows (id bigint PRIMARY KEY, value text NOT NULL)"
+                )
+                try await execute(
+                    sourceConnection,
+                    "INSERT INTO public.retry_rows VALUES (1, 'copied after retry')"
+                )
+            }
+            try await withConnection(target, password: password, id: 48) { targetConnection in
+                try await execute(
+                    targetConnection,
+                    "CREATE TABLE public.retry_rows (id bigint PRIMARY KEY, value text NOT NULL)"
+                )
+                try await execute(targetConnection, "CREATE SEQUENCE public.retry_once")
+                try await execute(
+                    targetConnection,
+                    """
+                    CREATE FUNCTION public.fail_first_retry_copy() RETURNS trigger
+                    LANGUAGE plpgsql AS $$
+                    BEGIN
+                      IF nextval('public.retry_once') = 1 THEN
+                        RAISE EXCEPTION 'retry this COPY' USING ERRCODE = '40001';
+                      END IF;
+                      RETURN NEW;
+                    END;
+                    $$
+                    """
+                )
+                try await execute(
+                    targetConnection,
+                    """
+                    CREATE TRIGGER retry_once_before_insert
+                    BEFORE INSERT ON public.retry_rows
+                    FOR EACH ROW EXECUTE FUNCTION public.fail_first_retry_copy()
+                    """
+                )
+            }
+
+            let request = CloneRequest(
+                sourceProfileID: source.id,
+                targetProfileID: target.id,
+                selectedTables: [TableReference(name: "retry_rows")],
+                options: CopyOptions(limit: 1, skipStructure: true),
+                executionOptions: CloneExecutionOptions(retryAttempts: 1)
+            )
+            let output = try await runClone(
+                coordinator: coordinator(password: password),
+                request: request,
+                source: source,
+                target: target
+            )
+            #expect(output.result.isCompleteSuccess)
+
+            try await withConnection(target, password: password, id: 49) { verification in
+                let rows = try await scalarInt(
+                    verification,
+                    "SELECT count(*)::bigint FROM public.retry_rows"
+                )
+                #expect(rows == 1)
+            }
+        }
+    }
+
     @Test("Cancellation rolls back the active table")
     func cancellation() async throws {
         let configuration = try #require(integrationConfiguration)

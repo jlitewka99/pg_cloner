@@ -25,6 +25,31 @@ final class PGClonerUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts.matching(identifier: "UI Test").count, 1)
     }
 
+  @MainActor
+  func testExecutionSettingsPersistAfterRelaunch() throws {
+    let app = XCUIApplication()
+    app.launch()
+
+    app.buttons["settingsButton"].click()
+    let executionTab = app.tabGroups.buttons["Execution"]
+    XCTAssertTrue(executionTab.waitForExistence(timeout: 5))
+    executionTab.click()
+
+    replaceText(in: app.textFields["queryTimeoutSeconds"], with: "45")
+    replaceText(in: app.textFields["retryAttempts"], with: "4")
+    app.buttons["saveExecutionSettingsButton"].click()
+    XCTAssertTrue(app.staticTexts["executionSettingsSaved"].waitForExistence(timeout: 5))
+
+    app.terminate()
+    app.launch()
+    app.buttons["settingsButton"].click()
+    XCTAssertTrue(app.tabGroups.buttons["Execution"].waitForExistence(timeout: 5))
+    app.tabGroups.buttons["Execution"].click()
+
+    XCTAssertEqual(app.textFields["queryTimeoutSeconds"].value as? String, "45")
+    XCTAssertEqual(app.textFields["retryAttempts"].value as? String, "4")
+  }
+
     @MainActor
     func testClonePreviewConfirmationProgressAndCancellation() throws {
         guard ProcessInfo.processInfo.environment["PGCLONER_UI_DATABASE_READY"] == "1" else {

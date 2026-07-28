@@ -1,10 +1,32 @@
 import Foundation
-import Testing
-@testable import PGClonerApp
 import PGClonerCore
+import Testing
+
+@testable import PGClonerApp
 
 @Suite("ProfileStore")
 struct ProfileStoreTests {
+  @Test("Execution settings persist independently from connection profiles")
+  func persistsExecutionSettings() async throws {
+    let directory = try makeDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let appSupport = directory.appendingPathComponent("Application Support")
+    let profiles = ProfileStore(applicationSupportDirectory: appSupport)
+    let settings = CloneSettingsStore(profileStore: profiles)
+
+    #expect(try await settings.load() == CloneExecutionOptions())
+
+    let saved = CloneExecutionOptions(queryTimeoutSeconds: 90, retryAttempts: 4)
+    try await settings.save(saved)
+    #expect(try await settings.load() == saved)
+    #expect(
+      FileManager.default.fileExists(
+        atPath: appSupport.appendingPathComponent("clone_settings.json").path
+      )
+    )
+  }
+
     @Test("Source and target profiles are persisted independently")
     func keepsRoleSpecificProfilesSeparate() async throws {
         let directory = try makeDirectory()

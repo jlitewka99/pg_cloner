@@ -20,6 +20,11 @@ struct SettingsView: View {
                     Label("Transformations", systemImage: "wand.and.stars")
                 }
 
+      ExecutionSettingsView(model: model)
+        .tabItem {
+          Label("Execution", systemImage: "timer")
+        }
+
             AboutSettingsView()
                 .tabItem {
                     Label("About", systemImage: "info.circle")
@@ -27,6 +32,87 @@ struct SettingsView: View {
         }
         .padding()
     }
+}
+
+private struct ExecutionSettingsView: View {
+  #if PGCLONER_OBSERVATION_MACRO
+    @Bindable var model: AppModel
+  #else
+    @ObservedObject var model: AppModel
+  #endif
+  @State private var queryTimeout = ""
+  @State private var retryAttempts = ""
+  @State private var validationMessage: String?
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Text("Execution")
+        .font(.title2.bold())
+      Text(
+        "The query timeout applies after the database connection is established. It does not change the 20-second connection timeout."
+      )
+      .foregroundStyle(.secondary)
+
+      Form {
+        TextField("Query timeout (seconds)", text: $queryTimeout)
+          .accessibilityIdentifier("queryTimeoutSeconds")
+        Text("Use 0 to disable the PostgreSQL statement timeout.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        TextField("Retry attempts", text: $retryAttempts)
+          .accessibilityIdentifier("retryAttempts")
+        Text(
+          "Transient table-copy failures are retried after 1 second, then 3 seconds. Maximum: 5."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+      .formStyle(.grouped)
+
+      if let validationMessage {
+        Text(validationMessage)
+          .foregroundStyle(.red)
+      }
+      if model.successMessage == "Execution settings saved." {
+        Text("Execution settings saved.")
+          .foregroundStyle(.green)
+          .accessibilityIdentifier("executionSettingsSaved")
+      }
+
+      HStack {
+        Spacer()
+        Button("Save") {
+          save()
+        }
+        .buttonStyle(.borderedProminent)
+        .accessibilityIdentifier("saveExecutionSettingsButton")
+      }
+    }
+    .onAppear(perform: load)
+    .onChange(of: model.executionOptions) { _, _ in load() }
+  }
+
+  private func load() {
+    queryTimeout = String(model.executionOptions.queryTimeoutSeconds)
+    retryAttempts = String(model.executionOptions.retryAttempts)
+  }
+
+  private func save() {
+    guard let timeout = Int(queryTimeout), let retries = Int(retryAttempts) else {
+      validationMessage = "Enter whole numbers for both execution settings."
+      return
+    }
+    do {
+      model.executionOptions = try CloneExecutionOptions(
+        queryTimeoutSeconds: timeout,
+        retryAttempts: retries
+      ).validated()
+      validationMessage = nil
+      Task { await model.saveExecutionOptions() }
+    } catch {
+      validationMessage = error.localizedDescription
+    }
+  }
 }
 
 private struct ConnectionSettingsView: View {

@@ -24,12 +24,17 @@ struct DataTransfer: Sendable {
         guard !columns.isEmpty else { return 0 }
 
         let sourceQuery = PostgresQuerySupport(connection: source, logger: logger)
-        let rowsTotal = try await count(
+    let rowsTotal: Int64
+    do {
+      rowsTotal = try await count(
             query: sourceQuery,
             table: metadata.reference,
             filter: filter,
             limit: limit
         )
+    } catch {
+      throw CloneTableFailure.source(error)
+    }
         progress(
             TableProgress(
                 table: metadata.reference,
@@ -45,7 +50,12 @@ struct DataTransfer: Sendable {
             filter: filter,
             limit: limit
         )
-        let sourceRows = try await source.query(select, logger: logger)
+    let sourceRows: PostgresRowSequence
+    do {
+      sourceRows = try await source.query(select, logger: logger)
+    } catch {
+      throw CloneTableFailure.source(error)
+    }
         let columnNames = columns.map(\.name)
 
         if conflictMode == .replace {
@@ -104,9 +114,11 @@ struct DataTransfer: Sendable {
         }
 
         let query = PostgresQuerySupport(connection: target, logger: logger)
-        let stage = "pgcloner_stage_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased())"
+    let stage =
+      "pgcloner_stage_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased())"
         let stageColumns = columns.indices.map { "pgcloner_c\($0)" }
-        try await query.execute(try createSafeStageSQL(
+    try await query.execute(
+      try createSafeStageSQL(
             stage: stage,
             target: metadata.reference,
             columns: columns,
@@ -150,9 +162,11 @@ struct DataTransfer: Sendable {
         progress: @Sendable (TableProgress) -> Void
     ) async throws -> Int64 {
         let query = PostgresQuerySupport(connection: target, logger: logger)
-        let stage = "pgcloner_stage_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased())"
+    let stage =
+      "pgcloner_stage_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased())"
         let aliases = columns.indices.map { "pgcloner_c\($0)" }
-        try await query.execute(try createSafeStageSQL(
+    try await query.execute(
+      try createSafeStageSQL(
             stage: stage,
             target: metadata.reference,
             columns: columns,
@@ -177,7 +191,8 @@ struct DataTransfer: Sendable {
             SQLIdentifier.quote($0.name)
         }.joined(separator: ", ")
         let sourceColumns = aliases.map(SQLIdentifier.quote).joined(separator: ", ")
-        let overriding = columns.contains { $0.identity == .always }
+    let overriding =
+      columns.contains { $0.identity == .always }
             ? "\nOVERRIDING SYSTEM VALUE"
             : ""
         try await query.execute(
@@ -231,6 +246,7 @@ struct DataTransfer: Sendable {
         progress: @Sendable (TableProgress) -> Void
     ) async throws -> Int64 {
         var copied: Int64 = 0
+    do {
         try await target.copyFrom(
             table: copyTableName,
             columns: columnNames,
@@ -238,8 +254,17 @@ struct DataTransfer: Sendable {
             logger: logger
         ) { writer in
             var buffer = ByteBufferAllocator().buffer(capacity: flushSize)
+        var iterator = sourceRows.makeAsyncIterator()
 
-            for try await row in sourceRows {
+        while true {
+          let row: PostgresRow?
+          do {
+            row = try await iterator.next()
+          } catch {
+            throw CloneTableFailure.source(error)
+          }
+          guard let row else { break }
+
                 try Task.checkCancellation()
                 let values = try Array(row).map { try $0.decode(String?.self) }
                 let transformed = try transformer.transform(
@@ -271,6 +296,11 @@ struct DataTransfer: Sendable {
                 try await writer.write(buffer)
             }
         }
+    } catch let failure as CloneTableFailure {
+      throw failure
+    } catch {
+      throw CloneTableFailure.target(error)
+    }
 
         progress(
             TableProgress(

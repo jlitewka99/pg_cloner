@@ -129,10 +129,15 @@ final class AppModel: ObservableObject {
     @Published
     #endif
     var localRules = TransformationRuleSet(description: "Local transformation overrides")
+  #if !PGCLONER_OBSERVATION_MACRO
+    @Published
+  #endif
+  var executionOptions = CloneExecutionOptions()
 
     let profileStore: ProfileStore
     let credentials: CredentialBroker
     private let rules: RuleStore
+  private let cloneSettings: CloneSettingsStore
     private let coordinator: CloneCoordinator
     private let eventTaskStorage = EventTaskStorage()
 
@@ -142,6 +147,7 @@ final class AppModel: ObservableObject {
         self.profileStore = profileStore
         self.credentials = credentials
         self.rules = RuleStore(profileStore: profileStore)
+    self.cloneSettings = CloneSettingsStore(profileStore: profileStore)
         self.coordinator = CloneCoordinator(credentials: credentials)
     }
 
@@ -191,6 +197,7 @@ final class AppModel: ObservableObject {
             let ruleSets = try await rules.load()
             defaultRules = ruleSets.defaults
             localRules = ruleSets.local
+      executionOptions = try await cloneSettings.load()
 
             if sourceProfile != nil {
                 await loadSource()
@@ -368,7 +375,8 @@ final class AppModel: ObservableObject {
                 parsedLimit = nil
             }
 
-            let perTable = try Dictionary(uniqueKeysWithValues: tableFilters.map {
+      let perTable = try Dictionary(
+        uniqueKeysWithValues: tableFilters.map {
                 table, draft in
                 let tableLimit: Int?
                 if let value = draft.limit.nilIfBlank {
@@ -402,7 +410,8 @@ final class AppModel: ObservableObject {
                 targetProfileID: targetProfile.id,
                 selectedTables: selectedTables.sorted(),
                 options: options,
-                perTableOptions: perTable
+        perTableOptions: perTable,
+        executionOptions: try executionOptions.validated()
             )
 
             progress = [:]
@@ -456,18 +465,28 @@ final class AppModel: ObservableObject {
         }
     }
 
+  func saveExecutionOptions() async {
+    do {
+      executionOptions = try executionOptions.validated()
+      try await cloneSettings.save(executionOptions)
+      successMessage = "Execution settings saved."
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
     private func handle(_ event: CloneEvent) {
         switch event {
-        case let .started(plan):
+    case .started(let plan):
             self.plan = plan
-        case let .progress(value):
+    case .progress(let value):
             progress[value.table] = value
-        case let .log(entry):
+    case .log(let entry):
             logs.append(entry)
             if logs.count > 500 {
                 logs.removeFirst(logs.count - 500)
             }
-        case let .finished(result):
+    case .finished(let result):
             self.result = result
             isCloning = false
             if result.isCompleteSuccess {
