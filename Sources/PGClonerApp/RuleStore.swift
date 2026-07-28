@@ -31,3 +31,40 @@ actor RuleStore {
             .appendingPathComponent("transformations.local.json")
     }
 }
+
+actor CloneSettingsStore {
+  private let profileStore: ProfileStore
+  private let decoder = JSONDecoder()
+  private let encoder: JSONEncoder = {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    return encoder
+  }()
+
+  init(profileStore: ProfileStore) {
+    self.profileStore = profileStore
+  }
+
+  func load() async throws -> CloneExecutionOptions {
+    let url = try await settingsURL()
+    guard FileManager.default.fileExists(atPath: url.path) else {
+      return .init()
+    }
+    return try decoder.decode(CloneExecutionOptions.self, from: Data(contentsOf: url)).validated()
+  }
+
+  func save(_ options: CloneExecutionOptions) async throws {
+    let validated = try options.validated()
+    let url = try await settingsURL()
+    try FileManager.default.createDirectory(
+      at: url.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try encoder.encode(validated).write(to: url, options: .atomic)
+  }
+
+  private func settingsURL() async throws -> URL {
+    try await profileStore.applicationSupportDirectory()
+      .appendingPathComponent("clone_settings.json")
+  }
+}

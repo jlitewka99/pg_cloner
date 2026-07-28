@@ -7,7 +7,7 @@ final class PGClonerUITests: XCTestCase {
         app.launch()
 
         app.buttons["settingsButton"].click()
-        let add = app.buttons["addConnectionButton"]
+        let add = app.buttons["addSourceConnectionButton"]
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         add.click()
 
@@ -18,11 +18,37 @@ final class PGClonerUITests: XCTestCase {
         replaceText(in: app.textFields["profileUsername"], with: "postgres")
         replaceText(in: app.secureTextFields["profilePassword"], with: "not-persisted-in-json")
 
-        let save = app.buttons["saveProfileButton"]
+        let save = app.buttons["saveSourceProfileButton"]
         XCTAssertTrue(save.isEnabled)
         save.click()
         XCTAssertTrue(app.staticTexts["UI Test"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts.matching(identifier: "UI Test").count, 1)
     }
+
+  @MainActor
+  func testExecutionSettingsPersistAfterRelaunch() throws {
+    let app = XCUIApplication()
+    app.launch()
+
+    app.buttons["settingsButton"].click()
+    let executionTab = app.tabGroups.buttons["Execution"]
+    XCTAssertTrue(executionTab.waitForExistence(timeout: 5))
+    executionTab.click()
+
+    replaceText(in: app.textFields["queryTimeoutSeconds"], with: "45")
+    replaceText(in: app.textFields["retryAttempts"], with: "4")
+    app.buttons["saveExecutionSettingsButton"].click()
+    XCTAssertTrue(app.staticTexts["executionSettingsSaved"].waitForExistence(timeout: 5))
+
+    app.terminate()
+    app.launch()
+    app.buttons["settingsButton"].click()
+    XCTAssertTrue(app.tabGroups.buttons["Execution"].waitForExistence(timeout: 5))
+    app.tabGroups.buttons["Execution"].click()
+
+    XCTAssertEqual(app.textFields["queryTimeoutSeconds"].value as? String, "45")
+    XCTAssertEqual(app.textFields["retryAttempts"].value as? String, "4")
+  }
 
     @MainActor
     func testClonePreviewConfirmationProgressAndCancellation() throws {

@@ -22,6 +22,11 @@ actor CredentialBroker: DatabaseCredentialProvider {
         try keychain.save(password: password, profileID: profile.id)
     }
 
+    func copyStoredPassword(from sourceProfileID: UUID, to targetProfileID: UUID) throws {
+        guard let password = try keychain.password(profileID: sourceProfileID) else { return }
+        try keychain.save(password: password, profileID: targetProfileID)
+    }
+
     func delete(profileID: UUID) throws {
         try keychain.delete(profileID: profileID)
     }

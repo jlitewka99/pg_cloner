@@ -267,6 +267,34 @@ public struct CopyOptions: Codable, Hashable, Sendable {
     }
 }
 
+public struct CloneExecutionOptions: Codable, Hashable, Sendable {
+  public static let defaultQueryTimeoutSeconds = 300
+  public static let defaultRetryAttempts = 2
+  public static let maximumQueryTimeoutSeconds = 86_400
+  public static let maximumRetryAttempts = 5
+
+  public var queryTimeoutSeconds: Int
+  public var retryAttempts: Int
+
+  public init(
+    queryTimeoutSeconds: Int = Self.defaultQueryTimeoutSeconds,
+    retryAttempts: Int = Self.defaultRetryAttempts
+  ) {
+    self.queryTimeoutSeconds = queryTimeoutSeconds
+    self.retryAttempts = retryAttempts
+  }
+
+  public func validated() throws -> Self {
+    guard (0...Self.maximumQueryTimeoutSeconds).contains(queryTimeoutSeconds) else {
+      throw CloneEngineError.invalidQueryTimeout
+    }
+    guard (0...Self.maximumRetryAttempts).contains(retryAttempts) else {
+      throw CloneEngineError.invalidRetryAttempts
+    }
+    return self
+  }
+}
+
 public struct TableCopyOptions: Codable, Hashable, Sendable {
     public var limit: Int?
     public var whereClause: String?
@@ -293,19 +321,22 @@ public struct CloneRequest: Codable, Hashable, Sendable {
     public var selectedTables: [TableReference]
     public var options: CopyOptions
     public var perTableOptions: [TableReference: TableCopyOptions]
+  public var executionOptions: CloneExecutionOptions
 
     public init(
         sourceProfileID: UUID,
         targetProfileID: UUID,
         selectedTables: [TableReference],
         options: CopyOptions,
-        perTableOptions: [TableReference: TableCopyOptions] = [:]
+    perTableOptions: [TableReference: TableCopyOptions] = [:],
+    executionOptions: CloneExecutionOptions = .init()
     ) {
         self.sourceProfileID = sourceProfileID
         self.targetProfileID = targetProfileID
         self.selectedTables = selectedTables
         self.options = options
         self.perTableOptions = perTableOptions
+    self.executionOptions = executionOptions
     }
 }
 
@@ -427,7 +458,8 @@ public struct CloneResult: Codable, Hashable, Sendable {
     }
 
     public var isCompleteSuccess: Bool {
-        !wasCancelled && !outcomes.isEmpty && outcomes.values.allSatisfy {
+    !wasCancelled && !outcomes.isEmpty
+      && outcomes.values.allSatisfy {
             if case .completed = $0 { return true }
             return false
         }
@@ -439,6 +471,8 @@ public enum CloneEngineError: LocalizedError, Sendable {
     case notRunning
     case filterRequired
     case invalidLimit
+  case invalidQueryTimeout
+  case invalidRetryAttempts
     case noTablesSelected
     case profileNotFound
     case missingPassword
@@ -459,26 +493,30 @@ public enum CloneEngineError: LocalizedError, Sendable {
         case .notRunning: "No clone is running."
         case .filterRequired: "Specify a LIMIT or WHERE filter before cloning."
         case .invalidLimit: "LIMIT must be a positive integer."
+    case .invalidQueryTimeout:
+      "Query timeout must be between 0 and \(CloneExecutionOptions.maximumQueryTimeoutSeconds) seconds."
+    case .invalidRetryAttempts:
+      "Retry attempts must be between 0 and \(CloneExecutionOptions.maximumRetryAttempts)."
         case .noTablesSelected: "Select at least one table."
         case .profileNotFound: "The selected connection profile no longer exists."
         case .missingPassword: "No password is stored for this connection."
         case .sameSourceAndTarget:
             "Source and target resolve to the same database. Cloning in place is blocked."
-        case let .insufficientPrivileges(objects):
+    case .insufficientPrivileges(let objects):
             "Required database privileges are missing: \(objects.joined(separator: ", "))."
-        case let .incompatibleTarget(problems):
+    case .incompatibleTarget(let problems):
             "The target is not compatible with the clone plan: \(problems.joined(separator: " "))."
-        case let .destructiveDependencies(objects):
+    case .destructiveDependencies(let objects):
             "The clone would remove objects outside the plan: \(objects.joined(separator: ", "))."
-        case let .unsupportedTypes(types):
+    case .unsupportedTypes(let types):
             "Required PostgreSQL types are missing on the target: \(types.joined(separator: ", "))."
-        case let .missingPrimaryKey(table):
+    case .missingPrimaryKey(let table):
             "Replace mode requires a primary key on \(table.qualifiedName)."
         case .azureCLINotFound:
             "Azure CLI was not found. Install it or select the az executable in Settings."
-        case let .azureCLI(message): "Azure CLI failed: \(message)"
-        case let .invalidMetadata(message): "Invalid PostgreSQL metadata: \(message)"
-        case let .database(message): message
+    case .azureCLI(let message): "Azure CLI failed: \(message)"
+    case .invalidMetadata(let message): "Invalid PostgreSQL metadata: \(message)"
+    case .database(let message): message
         }
     }
 }

@@ -127,6 +127,7 @@ public actor CloneCoordinator {
             throw CloneEngineError.sameSourceAndTarget
         }
         _ = try request.options.validated()
+    _ = try request.executionOptions.validated()
 
         let (stream, continuation) = AsyncStream.makeStream(of: CloneEvent.self)
         continuation.onTermination = { @Sendable [weak self] termination in
@@ -180,6 +181,8 @@ public actor CloneCoordinator {
         var terminalReason = "Clone did not reach this table."
         var source: PostgresConnection?
         var target: PostgresConnection?
+    var clonePlan: ClonePlan?
+    var cloneMetadata: [TableReference: TableMetadata]?
 
         func emitLog(_ level: LogLevel, _ message: String) {
             continuation.yield(.log(CloneLogEntry(level: level, message: message)))
@@ -191,15 +194,27 @@ public actor CloneCoordinator {
             async let targetConnection = open(targetProfile, id: 2)
             source = try await sourceConnection
             target = try await targetConnection
-            guard let source, let target else {
+      guard source != nil, target != nil else {
                 throw CloneEngineError.database("Could not establish both database connections.")
             }
+      try await applyQueryTimeout(
+        request.executionOptions,
+        to: target!
+      )
 
-            try await source.withTransaction(logger: logger) { sourceTransaction in
+      var sourceRetryAttempts: [TableReference: Int] = [:]
+      sourceClone: while true {
+        do {
+          try await source!.withTransaction(logger: logger) { sourceTransaction in
                 try await PostgresQuerySupport(
                     connection: sourceTransaction,
                     logger: logger
                 ).execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            try await applyQueryTimeout(
+              request.executionOptions,
+              to: sourceTransaction,
+              local: true
+            )
 
                 let inspector = SchemaInspector(connection: sourceTransaction, logger: logger)
                 let foreignKeys = try await inspector.allForeignKeys()
@@ -212,6 +227,8 @@ public actor CloneCoordinator {
                     inspector: inspector,
                     foreignKeys: foreignKeys
                 )
+            clonePlan = plan
+            cloneMetadata = metadata
 
                 continuation.yield(
                     .progress(
@@ -223,7 +240,7 @@ public actor CloneCoordinator {
                 )
                 let report = try await Preflight(
                     source: sourceTransaction,
-                    target: target,
+              target: target!,
                     logger: logger
                 ).run(plan: plan, metadata: metadata, options: request.options)
                 for warning in report.warnings {
@@ -251,7 +268,7 @@ public actor CloneCoordinator {
                 emitLog(.info, "Clone plan contains \(plan.ordered.count) tables")
 
                 var tableFailure: String?
-                for table in plan.ordered {
+            for table in plan.ordered where outcomes[table] == nil {
                     try Task.checkCancellation()
                     guard let tableMetadata = metadata[table] else {
                         throw CloneEngineError.invalidMetadata(
@@ -278,23 +295,38 @@ public actor CloneCoordinator {
                     }
 
                     do {
-                        let copied = try await cloneTable(
+                let cloned = try await cloneTableWithRetry(
                             source: sourceTransaction,
-                            target: target,
+                  target: target!,
+                  targetProfile: targetProfile,
                             metadata: tableMetadata,
                             filter: tableFilter,
                             limit: limit,
                             options: request.options,
+                  executionOptions: request.executionOptions,
                             continuation: continuation
                         )
-                        outcomes[table] = .completed(rows: copied)
-                        emitLog(.success, "Completed \(table.qualifiedName): \(copied) rows")
+                target = cloned.target
+                outcomes[table] = .completed(rows: cloned.rows)
+                emitLog(.success, "Completed \(table.qualifiedName): \(cloned.rows) rows")
                     } catch is CancellationError {
                         outcomes[table] = .rolledBack(message: "Cancelled")
                         continuation.yield(
                             .progress(TableProgress(table: table, phase: .cancelled))
                         )
                         throw CancellationError()
+              } catch let failure as CloneTableFailure {
+                if case .source(let error) = failure {
+                  throw SourceTableRetryRequired(table: table, underlying: error)
+                }
+                let message = PostgresConnectionFactory.safeMessage(failure.underlying)
+                outcomes[table] = .rolledBack(message: message)
+                continuation.yield(
+                  .progress(TableProgress(table: table, phase: .failed))
+                )
+                emitLog(.error, "\(table.qualifiedName) rolled back: \(message)")
+                tableFailure = message
+                break
                     } catch {
                         if Task.isCancelled {
                             outcomes[table] = .rolledBack(message: "Cancelled")
@@ -321,15 +353,47 @@ public actor CloneCoordinator {
                     }
                 }
 
+          }
+          break sourceClone
+        } catch let retry as SourceTableRetryRequired {
+          let attempt = (sourceRetryAttempts[retry.table] ?? 0) + 1
+          sourceRetryAttempts[retry.table] = attempt
+          guard CloneRetryPolicy.isRetryable(retry.underlying),
+            attempt <= request.executionOptions.retryAttempts
+          else {
+            let message = PostgresConnectionFactory.safeMessage(retry.underlying)
+            outcomes[retry.table] = .rolledBack(message: message)
+            continuation.yield(
+              .progress(TableProgress(table: retry.table, phase: .failed))
+            )
+            terminalReason = "Skipped after an earlier table failed: \(message)"
+            emitLog(
+              .error,
+              "\(retry.table.qualifiedName) rolled back after \(attempt - 1) retries: \(message)")
+            break sourceClone
+          }
+
+          emitLog(
+            .warning,
+            "Source connection was restarted for \(retry.table.qualifiedName); retry \(attempt) of \(request.executionOptions.retryAttempts). The clone is no longer guaranteed to use one snapshot across all tables."
+          )
+          try await Task.sleep(for: CloneRetryPolicy.delay(forRetry: attempt))
+          try? await source?.closeGracefully()
+          source = try await open(sourceProfile, id: 1)
+        }
+      }
+
+      if let clonePlan, let cloneMetadata {
                 if !request.options.skipStructure {
-                    let eligible = Set(outcomes.compactMap { table, outcome in
+          let eligible = Set(
+            outcomes.compactMap { table, outcome in
                         if case .completed = outcome { return table }
                         return nil
                     })
                     let finalizationFailures = try await finalizeSchema(
-                        target: target,
-                        plan: plan,
-                        metadata: metadata,
+            target: target!,
+            plan: clonePlan,
+            metadata: cloneMetadata,
                         eligibleTables: eligible,
                         continuation: continuation
                     )
@@ -346,7 +410,7 @@ public actor CloneCoordinator {
                         )
                     }
                 } else {
-                    for table in plan.ordered {
+          for table in clonePlan.ordered {
                         if case .completed = outcomes[table] {
                             continuation.yield(
                                 .progress(TableProgress(table: table, phase: .completed))
@@ -406,7 +470,8 @@ public actor CloneCoordinator {
         request: CloneRequest,
         selected: Set<TableReference>
     ) -> [TableReference: TableFilter] {
-        Dictionary(uniqueKeysWithValues: selected.map { table in
+    Dictionary(
+      uniqueKeysWithValues: selected.map { table in
             let local = request.perTableOptions[table]
             return (
                 table,
@@ -427,7 +492,8 @@ public actor CloneCoordinator {
         options: CopyOptions,
         continuation: AsyncStream<CloneEvent>.Continuation
     ) async throws -> Int64 {
-        try await target.withTransaction(logger: logger) { transaction in
+    do {
+      return try await target.withTransaction(logger: logger) { transaction in
             let query = PostgresQuerySupport(connection: transaction, logger: logger)
             if !options.skipStructure {
                 continuation.yield(
@@ -459,6 +525,80 @@ public actor CloneCoordinator {
             )
             return copied
         }
+    } catch let failure as CloneTableFailure {
+      throw failure
+    } catch {
+      throw CloneTableFailure.target(error)
+    }
+  }
+
+  private func cloneTableWithRetry(
+    source: PostgresConnection,
+    target: PostgresConnection,
+    targetProfile: ConnectionProfile,
+    metadata: TableMetadata,
+    filter: SubsetQuery?,
+    limit: Int?,
+    options: CopyOptions,
+    executionOptions: CloneExecutionOptions,
+    continuation: AsyncStream<CloneEvent>.Continuation
+  ) async throws -> (rows: Int64, target: PostgresConnection) {
+    var activeTarget = target
+    var retries = 0
+
+    while true {
+      do {
+        let rows = try await cloneTable(
+          source: source,
+          target: activeTarget,
+          metadata: metadata,
+          filter: filter,
+          limit: limit,
+          options: options,
+          continuation: continuation
+        )
+        return (rows, activeTarget)
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch let failure as CloneTableFailure {
+        guard case .target(let error) = failure else { throw failure }
+        guard CloneRetryPolicy.isRetryable(error), retries < executionOptions.retryAttempts else {
+          throw failure
+        }
+
+        retries += 1
+        continuation.yield(
+          .log(
+            CloneLogEntry(
+              level: .warning,
+              message:
+                "Retrying \(metadata.reference.qualifiedName) after transient target error (attempt \(retries) of \(executionOptions.retryAttempts))."
+            )
+          )
+        )
+        try await Task.sleep(for: CloneRetryPolicy.delay(forRetry: retries))
+        try Task.checkCancellation()
+
+        // A failed COPY can leave the protocol session unusable. A fresh target connection
+        // also handles server-side disconnects and gets the same statement timeout.
+        try? await activeTarget.closeGracefully()
+        activeTarget = try await open(targetProfile, id: 2)
+        try await applyQueryTimeout(executionOptions, to: activeTarget)
+      }
+    }
+  }
+
+  private func applyQueryTimeout(
+    _ options: CloneExecutionOptions,
+    to connection: PostgresConnection,
+    local: Bool = false
+  ) async throws {
+    let validated = try options.validated()
+    let milliseconds = validated.queryTimeoutSeconds * 1_000
+    let scope = local ? "LOCAL " : ""
+    try await PostgresQuerySupport(connection: connection, logger: logger).execute(
+      "SET \(scope)statement_timeout = \(milliseconds)"
+    )
     }
 
     private func synchronizeSequences(
@@ -553,8 +693,8 @@ public actor CloneCoordinator {
     }
 }
 
-private extension PostgresQuerySupport {
-    func scalarString(_ sql: String) async throws -> String? {
+extension PostgresQuerySupport {
+  fileprivate func scalarString(_ sql: String) async throws -> String? {
         try await scalarString(PostgresQuery(unsafeSQL: sql))
     }
 }

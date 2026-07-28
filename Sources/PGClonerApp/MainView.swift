@@ -22,6 +22,7 @@ struct MainView: View {
                 HStack(spacing: 10) {
                     connectionToolbarPicker(
                         title: "Source",
+                        profiles: model.sourceProfiles,
                         selection: $model.sourceProfileID,
                         accessibilityIdentifier: "sourceConnectionPicker"
                     )
@@ -35,6 +36,7 @@ struct MainView: View {
 
                     connectionToolbarPicker(
                         title: "Target",
+                        profiles: model.targetProfiles,
                         selection: $model.targetProfileID,
                         accessibilityIdentifier: "targetConnectionPicker"
                     )
@@ -102,6 +104,7 @@ struct MainView: View {
 
     private func connectionToolbarPicker(
         title: String,
+        profiles: [ConnectionProfile],
         selection: Binding<UUID?>,
         accessibilityIdentifier: String
     ) -> some View {
@@ -112,7 +115,7 @@ struct MainView: View {
 
             Picker(title, selection: selection) {
                 Text("Select connection").tag(nil as UUID?)
-                ForEach(model.profiles) { profile in
+                ForEach(profiles) { profile in
                     Text("\(profile.name) · \(profile.database)")
                         .tag(profile.id as UUID?)
                 }
