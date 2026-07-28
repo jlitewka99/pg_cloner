@@ -6,6 +6,21 @@ import Testing
 
 @Suite("ProfileStore")
 struct ProfileStoreTests {
+  @Test("Default storage is isolated from the original PG Cloner configuration")
+  func usesBetaSpecificApplicationSupportDirectory() async throws {
+    let store = ProfileStore()
+    let directory = try await store.applicationSupportDirectory()
+    let applicationSupport = try #require(
+      FileManager.default.urls(
+        for: .applicationSupportDirectory,
+        in: .userDomainMask
+      ).first
+    )
+
+    #expect(directory == applicationSupport.appendingPathComponent("PG Cloner Beta", isDirectory: true))
+    #expect(directory != applicationSupport.appendingPathComponent("PG Cloner", isDirectory: true))
+  }
+
   @Test("Execution settings persist independently from connection profiles")
   func persistsExecutionSettings() async throws {
     let directory = try makeDirectory()
@@ -27,7 +42,7 @@ struct ProfileStoreTests {
     )
   }
 
-    @Test("Source and target profiles are persisted independently")
+  @Test("Source and target profiles are persisted independently")
     func keepsRoleSpecificProfilesSeparate() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -48,6 +63,67 @@ struct ProfileStoreTests {
         try await store.delete(profileID: source.id, from: .source)
         #expect(try await store.load(.source).isEmpty)
         #expect(try await store.load(.target) == [target])
+    }
+
+    @Test("Shared PG Cloner configuration is copied into isolated beta storage")
+    func migratesSharedApplicationSupportConfiguration() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let beta = directory.appendingPathComponent("PG Cloner Beta")
+        let previous = directory.appendingPathComponent("PG Cloner")
+        let legacy = directory.appendingPathComponent("Legacy")
+        try FileManager.default.createDirectory(at: previous, withIntermediateDirectories: true)
+
+        let source = profile(name: "Previous source")
+        let target = profile(name: "Previous target")
+        try JSONEncoder().encode([source]).write(
+            to: previous.appendingPathComponent("source_connections.json"),
+            options: .atomic
+        )
+        try JSONEncoder().encode([target]).write(
+            to: previous.appendingPathComponent("target_connections.json"),
+            options: .atomic
+        )
+        let settings = CloneExecutionOptions(queryTimeoutSeconds: 90, retryAttempts: 4)
+        try JSONEncoder().encode(settings).write(
+            to: previous.appendingPathComponent("clone_settings.json"),
+            options: .atomic
+        )
+        let transformations = Data("{\"description\":\"Previous overrides\",\"rules\":[]}".utf8)
+        try transformations.write(
+            to: previous.appendingPathComponent("transformations.local.json"),
+            options: .atomic
+        )
+
+        let store = ProfileStore(
+            applicationSupportDirectory: beta,
+            previousApplicationSupportDirectory: previous,
+            legacyDirectory: legacy
+        )
+        let migration = try #require(try await store.migrationIfNeeded())
+        let importedSource = try #require(migration.source.first)
+        let importedTarget = try #require(migration.target.first)
+
+        #expect(migration.kind == .previousApplicationSupport)
+        #expect(importedSource.profile.id != source.id)
+        #expect(importedTarget.profile.id != target.id)
+        #expect(importedSource.passwordSourceProfileID == source.id)
+        #expect(importedTarget.passwordSourceProfileID == target.id)
+
+        try await store.save(migration.source.map(\.profile), for: .source)
+        try await store.save(migration.target.map(\.profile), for: .target)
+        try await store.copyPreviousConfigurationIfNeeded()
+
+        let copiedSettings = try JSONDecoder().decode(
+            CloneExecutionOptions.self,
+            from: Data(contentsOf: beta.appendingPathComponent("clone_settings.json"))
+        )
+        #expect(copiedSettings == settings)
+        #expect(
+            try Data(contentsOf: beta.appendingPathComponent("transformations.local.json"))
+                == transformations
+        )
     }
 
     @Test("Legacy source and target files retain their roles during migration")

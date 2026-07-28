@@ -13,6 +13,7 @@ enum ConnectionProfileRole: String, CaseIterable, Sendable {
 actor ProfileStore {
     private let fileManager: FileManager
     private let applicationSupportDirectoryOverride: URL?
+    private let previousApplicationSupportDirectoryOverride: URL?
     private let legacyDirectory: URL
     private let decoder = JSONDecoder()
     private let encoder: JSONEncoder = {
@@ -23,11 +24,13 @@ actor ProfileStore {
 
     init(
         applicationSupportDirectory: URL? = nil,
+        previousApplicationSupportDirectory: URL? = nil,
         legacyDirectory: URL? = nil,
         fileManager: FileManager = .default
     ) {
         self.fileManager = fileManager
         applicationSupportDirectoryOverride = applicationSupportDirectory
+        previousApplicationSupportDirectoryOverride = previousApplicationSupportDirectory
         self.legacyDirectory = legacyDirectory
             ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent(
                 ".pg_cloner",
@@ -71,6 +74,45 @@ actor ProfileStore {
     func migrationIfNeeded() throws -> ProfileMigration? {
         guard try !hasRoleSpecificStore() else { return nil }
 
+        let previousSource = try loadPreviousProfiles(for: .source)
+        let previousTarget = try loadPreviousProfiles(for: .target)
+        if !previousSource.isEmpty || !previousTarget.isEmpty {
+            return ProfileMigration(
+                kind: .previousApplicationSupport,
+                source: previousSource.map { profile in
+                    ImportedProfile(
+                        profile: Self.copy(of: profile),
+                        passwordSourceProfileID: profile.id
+                    )
+                },
+                target: previousTarget.map { profile in
+                    ImportedProfile(
+                        profile: Self.copy(of: profile),
+                        passwordSourceProfileID: profile.id
+                    )
+                }
+            )
+        }
+
+        let previousUnifiedProfiles = try loadPreviousUnifiedProfiles()
+        if !previousUnifiedProfiles.isEmpty {
+            return ProfileMigration(
+                kind: .previousApplicationSupport,
+                source: previousUnifiedProfiles.map { profile in
+                    ImportedProfile(
+                        profile: Self.copy(of: profile),
+                        passwordSourceProfileID: profile.id
+                    )
+                },
+                target: previousUnifiedProfiles.map { profile in
+                    ImportedProfile(
+                        profile: Self.copy(of: profile),
+                        passwordSourceProfileID: profile.id
+                    )
+                }
+            )
+        }
+
         let legacySource = try loadLegacyProfiles(for: .source)
         let legacyTarget = try loadLegacyProfiles(for: .target)
         if !legacySource.isEmpty || !legacyTarget.isEmpty {
@@ -99,6 +141,27 @@ actor ProfileStore {
         )
     }
 
+    /// Copies non-profile settings from the previous shared app directory once.
+    func copyPreviousConfigurationIfNeeded() throws {
+        guard let previousDirectory = try previousApplicationSupportDirectory() else { return }
+
+        let destinationDirectory = try applicationSupportDirectory()
+        for fileName in ["clone_settings.json", "transformations.local.json"] {
+            let source = previousDirectory.appendingPathComponent(fileName)
+            let destination = destinationDirectory.appendingPathComponent(fileName)
+            guard fileManager.fileExists(atPath: source.path),
+                  !fileManager.fileExists(atPath: destination.path) else {
+                continue
+            }
+
+            try fileManager.createDirectory(
+                at: destinationDirectory,
+                withIntermediateDirectories: true
+            )
+            try fileManager.copyItem(at: source, to: destination)
+        }
+    }
+
     func applicationSupportDirectory() throws -> URL {
         if let applicationSupportDirectoryOverride {
             return applicationSupportDirectoryOverride
@@ -109,7 +172,7 @@ actor ProfileStore {
         ).first else {
             throw CocoaError(.fileNoSuchFile)
         }
-        return root.appendingPathComponent("PG Cloner", isDirectory: true)
+        return root.appendingPathComponent("PG Cloner Beta", isDirectory: true)
     }
 
     func profilesURL(for role: ConnectionProfileRole) throws -> URL {
@@ -126,9 +189,40 @@ actor ProfileStore {
     }
 
     private func loadUnifiedProfiles() throws -> [ConnectionProfile] {
-        let url = try applicationSupportDirectory().appendingPathComponent("profiles.json")
+        try loadUnifiedProfiles(from: applicationSupportDirectory())
+    }
+
+    private func loadPreviousProfiles(for role: ConnectionProfileRole) throws -> [ConnectionProfile] {
+        guard let directory = try previousApplicationSupportDirectory() else { return [] }
+        let url = directory.appendingPathComponent(role.fileName)
         guard fileManager.fileExists(atPath: url.path) else { return [] }
         return try decoder.decode([ConnectionProfile].self, from: Data(contentsOf: url))
+            .sorted(by: Self.sortProfiles)
+    }
+
+    private func loadPreviousUnifiedProfiles() throws -> [ConnectionProfile] {
+        guard let directory = try previousApplicationSupportDirectory() else { return [] }
+        return try loadUnifiedProfiles(from: directory)
+    }
+
+    private func loadUnifiedProfiles(from directory: URL) throws -> [ConnectionProfile] {
+        let url = directory.appendingPathComponent("profiles.json")
+        guard fileManager.fileExists(atPath: url.path) else { return [] }
+        return try decoder.decode([ConnectionProfile].self, from: Data(contentsOf: url))
+    }
+
+    private func previousApplicationSupportDirectory() throws -> URL? {
+        if let previousApplicationSupportDirectoryOverride {
+            return previousApplicationSupportDirectoryOverride
+        }
+        guard applicationSupportDirectoryOverride == nil else { return nil }
+        guard let root = fileManager.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        return root.appendingPathComponent("PG Cloner", isDirectory: true)
     }
 
     private func loadLegacyProfiles(for role: ConnectionProfileRole) throws -> [ImportedProfile] {
@@ -176,6 +270,7 @@ actor ProfileStore {
 
 struct ProfileMigration: Sendable {
     enum Kind: Equatable, Sendable {
+        case previousApplicationSupport
         case legacyRoleSpecific
         case unifiedProfiles
         case empty

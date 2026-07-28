@@ -17,7 +17,7 @@ jobs:
   test-and-build:
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
 
       - name: Show toolchain
         run: |
@@ -26,6 +26,20 @@ jobs:
 
       - name: Resolve Swift packages
         run: swift package resolve
+
+      - name: Set up Go for actionlint
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.0.0
+        with:
+          go-version: '1.25.1'
+          cache: false
+
+      - name: Validate GitHub Actions workflows
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.10
+          "$(go env GOPATH)/bin/actionlint" -color
+
+      - name: Run release metadata tests
+        run: zsh scripts/test_release_metadata.sh
 
       - name: Run Swift package tests
         run: swift test --disable-sandbox --enable-swift-testing --disable-xctest
