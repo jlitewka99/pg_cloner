@@ -180,6 +180,9 @@ final class AppModel: ObservableObject {
                 targetProfiles = migration.target.map(\.profile)
                 try await profileStore.save(sourceProfiles, for: .source)
                 try await profileStore.save(targetProfiles, for: .target)
+                if migration.kind == .previousApplicationSupport {
+                    try await profileStore.copyPreviousConfigurationIfNeeded()
+                }
 
                 if migration.kind != .empty {
                     appendLog(
@@ -191,17 +194,14 @@ final class AppModel: ObservableObject {
                 sourceProfiles = try await profileStore.load(.source)
                 targetProfiles = try await profileStore.load(.target)
             }
-            sourceProfileID = sourceProfiles.first?.id
-            targetProfileID = targetProfiles.first?.id
+            sourceProfileID = nil
+            targetProfileID = nil
 
             let ruleSets = try await rules.load()
             defaultRules = ruleSets.defaults
             localRules = ruleSets.local
       executionOptions = try await cloneSettings.load()
 
-            if sourceProfile != nil {
-                await loadSource()
-            }
         } catch {
             errorMessage = error.localizedDescription
         }

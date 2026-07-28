@@ -33,22 +33,17 @@ This creates a universal app, `PG-Cloner-v1.0.0.dmg`, a Sparkle-compatible `PG-C
 
 ## Publishing a beta
 
-1. Merge the intended changes into `main` and ensure CI is green.
-2. Create and push a stable semantic-version tag:
+1. Update `MARKETING_VERSION` to the intended `MAJOR.MINOR.PATCH` version in the release PR.
+2. Merge the PR into `main` after CI is green.
 
-   ```zsh
-   git tag -a v1.0.0 -m 'PG Cloner 1.0.0'
-   git push origin v1.0.0
-   ```
+The **Release beta** workflow validates the version, tests and builds the app, then creates the matching `vMAJOR.MINOR.PATCH` tag, GitHub Release, signed appcast, and GitHub Pages download page. A merge that keeps an already released version does not publish anything.
 
-3. The **Release beta** workflow tests, creates or reuses the GitHub Release, uploads the DMG/ZIP/checksums, signs `appcast.xml`, and deploys the latest feed and landing page to GitHub Pages.
-
-Only `vMAJOR.MINOR.PATCH` tags publish releases. Re-running a failed workflow preserves the existing release asset and retries the signed Pages deployment.
+If a release fails after its tag is created, re-run the workflow: it verifies that the tag points to the same commit and resumes publication.
 
 ## One-time repository setup
 
 - In **Settings → Pages**, set **Source** to **GitHub Actions**.
-- Protect `main` and tags matching `v*`; only trusted maintainers should create release tags.
+- Protect `main` with pull requests and the `test-and-build` check; protect `v*` tags from updates and deletions.
 - The signing key is stored in the login Keychain under the Sparkle account `com.pgcloner.app`; its public key is committed in `distribution/Info.plist`.
 - `SPARKLE_ED25519_PRIVATE_KEY` is a repository Actions secret. It was initialized during this setup and must never be committed or printed. Export and back up the Keychain key before moving to another Mac; losing it prevents signing future updates with the same identity.
 
